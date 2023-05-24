@@ -77,25 +77,18 @@ public class ApmConvertor {
       return null;
     }
     QueryProto.StatisticData.Builder statisticDataBuilder = QueryProto.StatisticData.newBuilder();
-    statisticDataBuilder.setTraceCount(statisticData.getTraceCount());
-    statisticDataBuilder.setSpanCount(statisticData.getSpanCount());
-    statisticDataBuilder.setServiceCount(statisticData.getServiceCount());
-    statisticDataBuilder.setServiceInstanceCount(statisticData.getServiceInstanceCount());
-    statisticDataBuilder.setEndpointCount(statisticData.getEndpointCount());
-    statisticDataBuilder.setSuccessRate(statisticData.getSuccessRate());
-    statisticDataBuilder.setAvgLatency(statisticData.getAvgLatency());
     if (statisticData.getResources() != null) {
       statisticDataBuilder.putAllResources(statisticData.getResources());
+    }
+    if (statisticData.getDatas() != null) {
+      statisticDataBuilder.putAllDatas(statisticData.getDatas());
     }
     return statisticDataBuilder.build();
   }
 
   public static StatisticData convertStatisticData(QueryProto.StatisticData statisticDataProto) {
     return new StatisticData(statisticDataProto.getResourcesMap(),
-        statisticDataProto.getTraceCount(), statisticDataProto.getSpanCount(),
-        statisticDataProto.getServiceCount(), statisticDataProto.getServiceInstanceCount(),
-        statisticDataProto.getEndpointCount(), statisticDataProto.getSuccessRate(),
-        statisticDataProto.getAvgLatency());
+        statisticDataProto.getDatasMap());
   }
 
 
@@ -491,5 +484,15 @@ public class ApmConvertor {
     result.setStartTime(slowSql.getStartTime());
 
     return result;
+  }
+
+  public static QueryProto.StatisticDataList convert(StatisticDataList statisticDataList) {
+    QueryProto.StatisticDataList.Builder builder = QueryProto.StatisticDataList.newBuilder();
+    if (!CollectionUtils.isEmpty(statisticDataList.getStatisticDataList())) {
+      for (StatisticData data : statisticDataList.getStatisticDataList()) {
+        builder.addStatisticData(convertStatisticData(data));
+      }
+    }
+    return builder.build();
   }
 }

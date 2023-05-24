@@ -7,12 +7,16 @@ import lombok.AllArgsConstructor;
 import lombok.Data;
 import lombok.NoArgsConstructor;
 
-import java.util.Map;
+import java.util.List;
+
+/**
+ * @author zzhb101
+ * @time 2023-05-22 7:50
+ */
 
 @Data
 @AllArgsConstructor
 @NoArgsConstructor
-public class StatisticData {
-  private Map<String, String> resources;
-  private Map<String, Double> datas;
+public class StatisticDataList {
+  private List<StatisticData> statisticDataList;
 }

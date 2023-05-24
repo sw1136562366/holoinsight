@@ -120,12 +120,23 @@ public class DefaultQueryServiceImpl implements QueryService {
       Map<String, Set<String>> keys = new HashMap<>();
       List<QueryProto.Datasource> datasources = request.getDatasourcesList();
       for (QueryProto.Datasource ds : datasources) {
-        QueryParam queryParam = new QueryParam();
-        queryParam.setMetric(ds.getMetric());
-        queryParam.setTenant(request.getTenant());
-        Result result = metricStorage.querySchema(queryParam);
-        Map<String, String> tags = result.getTags();
-        keys.put(ds.getMetric(), tags.keySet());
+        if (this.apmMetrics.getUnchecked(request.getTenant()).containsKey(ds.getMetric())) {
+          Response<List<String>> schemaRsp = apmClient.getClient(request.getTenant())
+              .querySchema(new QueryMetricRequest(request.getTenant(), ds.getMetric(), null, null))
+              .execute();
+          if (!schemaRsp.isSuccessful()) {
+            throw new QueryException(schemaRsp.errorBody().string());
+          }
+          builder.addResults(QueryProto.KeysResult.newBuilder().setMetric(ds.getMetric())
+              .addAllKeys(schemaRsp.body()).build());
+        } else {
+          QueryParam queryParam = new QueryParam();
+          queryParam.setMetric(ds.getMetric());
+          queryParam.setTenant(request.getTenant());
+          Result result = metricStorage.querySchema(queryParam);
+          Map<String, String> tags = result.getTags();
+          keys.put(ds.getMetric(), tags.keySet());
+        }
       }
       keys.forEach((m, ks) -> builder
           .addResults(QueryProto.KeysResult.newBuilder().setMetric(m).addAllKeys(ks)).build());
@@ -137,16 +148,36 @@ public class DefaultQueryServiceImpl implements QueryService {
   public QueryProto.QueryMetricsResponse queryMetrics(QueryProto.QueryMetricsRequest request)
       throws QueryException {
     return wrap(() -> {
+
+      QueryProto.QueryMetricsResponse.Builder b = QueryProto.QueryMetricsResponse.newBuilder();
+
+      Set<String> metrics = new HashSet<>();
+
       QueryMetricsParam param = QueryStorageUtils.convertToQueryMetricsParam(request);
       List<String> suggestRsp = metricStorage.queryMetrics(param);
 
-      QueryProto.QueryMetricsResponse.Builder b = QueryProto.QueryMetricsResponse.newBuilder();
       if (CollectionUtils.isNotEmpty(suggestRsp)) {
         for (String metric : suggestRsp) {
-          QueryProto.MetricResult mr = QueryProto.MetricResult.newBuilder().setName(metric).build();
-          b.addResults(mr);
+          metrics.add(metric);
         }
       }
+
+      Map<String, MetricDefine> apmMetrics = this.apmMetrics.getUnchecked(request.getTenant());
+      if (apmMetrics != null) {
+        for (String apmMetric : apmMetrics.keySet()) {
+          if (StringUtils.isBlank(request.getName())
+              || request.getExplicit() && StringUtils.equals(apmMetric, request.getName())
+              || !request.getExplicit() && StringUtils.contains(apmMetric, request.getName())) {
+            metrics.add(apmMetric);
+          }
+        }
+      }
+
+      metrics.forEach(metric -> {
+        QueryProto.MetricResult mr = QueryProto.MetricResult.newBuilder().setName(metric).build();
+        b.addResults(mr);
+      });
+
       return b.build();
     }, "queryMetrics", request);
   }
@@ -306,35 +337,26 @@ public class DefaultQueryServiceImpl implements QueryService {
   }
 
   @Override
-  public List<QueryProto.StatisticData> statisticTrace(QueryProto.QueryTraceRequest request)
+  public QueryProto.StatisticDataList statisticTrace(QueryProto.StatisticRequest request)
       throws QueryException {
     return wrap(() -> {
       Assert.isTrue((request.getStart() != 0 && request.getEnd() != 0), "timeRange should be set!");
 
-      ApmAPI apmAPI = apmClient.getClient(request.getTenant());
-      QueryTraceRequest queryTraceRequest = new QueryTraceRequest();
-      queryTraceRequest.setTenant(request.getTenant());
-      queryTraceRequest.setServiceName(request.getServiceName());
-      queryTraceRequest.setServiceInstanceName(request.getServiceInstanceName());
-      queryTraceRequest.setTraceIds(request.getTraceIdsList());
-      queryTraceRequest.setEndpointName(request.getEndpointName());
-      queryTraceRequest.setDuration(new Duration(request.getStart(), request.getEnd(), null));
+      Assert.notEmpty((request.getGroupsList()),
+          "groups should be set, or you should use billing API!");
 
-      queryTraceRequest.setMinTraceDuration(request.getMinTraceDuration());
-      queryTraceRequest.setMaxTraceDuration(request.getMaxTraceDuration());
-      if (StringUtils.isEmpty(request.getTraceState())) {
-        queryTraceRequest.setTraceState(TraceState.ALL);
-      } else {
-        queryTraceRequest.setTraceState(TraceState.valueOf(request.getTraceState()));
-      }
-      queryTraceRequest.setTags(ApmConvertor.convertTagsMap(request.getTagsMap()));
-      Call<List<StatisticData>> call = apmAPI.statistic(queryTraceRequest);
-      Response<List<StatisticData>> statisticDataRsp = call.execute();
+      ApmAPI apmAPI = apmClient.getClient(request.getTenant());
+      StatisticRequest queryTraceRequest = new StatisticRequest();
+      queryTraceRequest.setTenant(request.getTenant());
+      queryTraceRequest.setStart(request.getStart());
+      queryTraceRequest.setEnd(request.getEnd());
+      queryTraceRequest.setGroups(request.getGroupsList());
+      Call<StatisticDataList> call = apmAPI.statistic(queryTraceRequest);
+      Response<StatisticDataList> statisticDataRsp = call.execute();
       if (!statisticDataRsp.isSuccessful()) {
         throw new QueryException(statisticDataRsp.errorBody().string());
       }
-      return statisticDataRsp.body().stream().map(ApmConvertor::convertStatisticData)
-          .collect(Collectors.toList());
+      return ApmConvertor.convert(statisticDataRsp.body());
     }, "statisticTrace", request);
   }
 
